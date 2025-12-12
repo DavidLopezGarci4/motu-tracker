@@ -70,12 +70,16 @@ def buscar_kidinn():
         log.append(f"Items a procesar: {len(items)}")
         
         items_procesados = 0
-        for item in items:
+        for idx, item in enumerate(items):
+            # DEBUG SUPREMO: Ver el HTML del primer item
+            if idx == 0:
+                log.append(f"📦 DEBUG HTML KIDINN ITEM 0: {str(item)[:600]}")
+                
             try:
                 # Link
                 link_obj = item.select_one('a.js-href_list_products, a')
                 if not link_obj: 
-                    log.append("⚠️ Item sin link (Kidinn)")
+                    log.append(f"⚠️ Item {idx} sin link (Kidinn)")
                     continue
                 link = link_obj['href']
                 if not link.startswith('http'): link = "https://www.tradeinn.com" + link
@@ -169,7 +173,11 @@ def buscar_actiontoys():
                     break 
             
             items_ok_pag = 0
-            for item in items:
+            for idx, item in enumerate(items):
+                # DEBUG SUPREMO: Ver el HTML del primer item
+                if idx == 0:
+                    log.append(f"📦 DEBUG HTML ITEM 0 (P{pagina_num}): {str(item)[:600]}")
+                
                 try:
                     link_elem = item.select_one('a.product-loop-title')
                     if not link_elem: link_elem = item.select_one('a.woocommerce-LoopProduct-link') 
@@ -177,7 +185,7 @@ def buscar_actiontoys():
                     if not link_elem: link_elem = item.select_one('a')
                     
                     if not link_elem: 
-                        if items_ok_pag < 3: log.append(f"⚠️ Link missing p{pagina_num} item {items_ok_pag}")
+                        if items_ok_pag < 3: log.append(f"⚠️ Link missing p{pagina_num} item {idx}")
                         continue
                     link = link_elem['href']
                     
