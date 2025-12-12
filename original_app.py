@@ -33,45 +33,47 @@ HEADERS_STATIC = {
     "Referer": "https://www.google.com/"
 }
 
-# --- FUNCIÓN 1: TRADEINN (Kidinn) - MODO ESTÁTICO ---
+# --- FUNCIÓN 1: TRADEINN (Kidinn) ---
 def buscar_kidinn():
-    """Escanea la página de Masters del Universo de Kidinn (Modo Requests)."""
+    """Escanea Kidinn y devuelve dict con items y logs."""
     url = "https://www.tradeinn.com/kidinn/es/masters-of-the-universe/5883/nm"
+    log = [f"🌍 Conectando a Kidinn: {url}"]
     productos = []
-    print(f"🌍 Consultando Kidinn: {url}")
     
     try:
         r = requests.get(url, headers=HEADERS_STATIC, timeout=15)
+        log.append(f"Status Code: {r.status_code}")
         
-        # Debugging visible
         if r.status_code != 200:
-            print(f"⚠️ Kidinn Blocked: {r.status_code}")
-            st.toast(f"⚠️ Kidinn bloqueó la conexión (Error {r.status_code})", icon="🚫")
-            return []
+            log.append(f"❌ Bloqueo detectado. Cabeceras respuesta: {r.headers}")
+            return {'items': [], 'log': log}
             
+        # Detección de Captcha/Bloqueo
+        if "captcha" in r.text.lower() or "robot" in r.text.lower() or "access denied" in r.text.lower():
+            log.append("⚠️ DETECTADO BLOQUEO ANTI-BOT (Captcha/Robot)")
+            log.append(f"Preview HTML: {r.text[:300]}...")
+            return {'items': [], 'log': log}
+
         soup = BeautifulSoup(r.text, 'html.parser')
         
         items = soup.select('div.js-product-list-item')
+        log.append(f"Items encontrados (selectores): {len(items)}")
+        
         if not items:
-            print(f"⚠️ Kidinn: HTML recibido ({len(r.text)} bytes) pero 0 items encontrados. Posible cambio de selector.")
+            log.append(f"⚠️ HTML recibido ok pero selectores vacíos. Preview: {r.text[:300]}...")
         
         for item in items:
             try:
-                # Link
                 link_obj = item.select_one('a.js-href_list_products')
                 if not link_obj: continue
                 link = link_obj['href']
-                if not link.startswith('http'): 
-                    link = "https://www.tradeinn.com" + link
+                if not link.startswith('http'): link = "https://www.tradeinn.com" + link
 
-                # Title
                 titulo_obj = link_obj.select_one('h3 p') or link_obj.select_one('h3')
                 titulo = titulo_obj.get_text(strip=True) if titulo_obj else "Desconocido"
                 
-                # Filtro
                 if not any(x in titulo.lower() for x in ["origins", "motu", "masters", "he-man", "skeletor"]): continue
                 
-                # Price
                 price_candidates = link_obj.select('div > p')
                 precio = "Agotado"
                 precio_val = 9999.0
@@ -85,7 +87,6 @@ def buscar_kidinn():
                         except: pass
                         break
                 
-                # Imagen
                 img_obj = item.select_one('img')
                 img_src = img_obj['src'] if img_obj else None
                 
@@ -98,16 +99,19 @@ def buscar_kidinn():
                     "Enlace": link,
                     "Imagen": img_src
                 })
-            except: continue
+            except Exception as item_e:
+                log.append(f"⚠️ Error procesando item en Kidinn: {item_e}")
+                continue
     except Exception as e:
-        print(f"❌ Error Kidinn: {e}")
+        log.append(f"❌ Excepción crítica en Kidinn: {str(e)}")
         
-    return productos
+    return {'items': productos, 'log': log}
 
 # --- FUNCIÓN 2: ACTION TOYS - MODO ESTÁTICO ---
 def buscar_actiontoys():
-    """Escanea ActionToys (Modo Requests)."""
+    """Escanea ActionToys y devuelve dict con items y logs."""
     base_url = "https://actiontoys.es/figuras-de-accion/masters-of-the-universe/"
+    log = [f"🌍 Conectando a ActionToys: {base_url}"]
     productos = []
     
     # En modo estático iteramos, pero requests es bloqueante, así que cuidado con muchas páginas.
@@ -118,19 +122,36 @@ def buscar_actiontoys():
     
     while url_actual and pagina_num <= max_paginas:
         try:
-            print(f"🌍 Consultando ActionToys p{pagina_num}: {url_actual}")
+            log.append(f"🌍 Consultando ActionToys p{pagina_num}: {url_actual}")
             r = requests.get(url_actual, headers=HEADERS_STATIC, timeout=15)
-            if r.status_code != 200: break
+            log.append(f"Página {pagina_num} Status: {r.status_code}")
             
+            if r.status_code != 200: 
+                log.append(f"❌ Bloqueo detectado en ActionToys p{pagina_num}. Cabeceras respuesta: {r.headers}")
+                break
+            
+            # Detección de Captcha/Bloqueo
+            if "captcha" in r.text.lower() or "robot" in r.text.lower() or "access denied" in r.text.lower():
+                log.append(f"⚠️ DETECTADO BLOQUEO ANTI-BOT (Captcha/Robot) en ActionToys p{pagina_num}")
+                log.append(f"Preview HTML: {r.text[:300]}...")
+                break
+
             soup = BeautifulSoup(r.text, 'html.parser')
             
             items = soup.select('li.product, article.product-miniature, div.product-small')
             
+            log.append(f"Página {pagina_num} Items: {len(items)}")
+            
             if not items:
                 # Fallback
                 links = soup.select('a.product-loop-title')
-                if links: items = [l.parent for l in links]
-                else: break 
+                if links: 
+                    items = [l.parent for l in links]
+                    log.append(f"Página {pagina_num} Items (Fallback): {len(items)}")
+                else:
+                    if pagina_num == 1:
+                        log.append(f"⚠️ HTML Preview: {r.text[:300]}...")
+                    break 
             
             for item in items:
                 try:
@@ -167,7 +188,9 @@ def buscar_actiontoys():
                         "Enlace": link,
                         "Imagen": img_src
                     })
-                except: continue
+                except Exception as item_e:
+                    log.append(f"⚠️ Error procesando item en ActionToys p{pagina_num}: {item_e}")
+                    continue
             
             next_button = soup.select_one('a.next') or soup.select_one('a[rel="next"]')
             if next_button:
@@ -176,16 +199,17 @@ def buscar_actiontoys():
             else:
                 url_actual = None
         except Exception as e: 
-            print(f"❌ Error ActionToys: {e}")
+            log.append(f"❌ Error crítico en ActionToys p{pagina_num}: {str(e)}")
             break
             
-    return productos
+    return {'items': productos, 'log': log}
 
 # --- ORQUESTADOR HÍBRIDO (ASYNC WRAPPER) ---
 async def buscar_en_todas_async():
     """
     Ejecuta scrapers síncronos (requests) en hilos separados (asyncio.to_thread)
     para mantener el paralelismo y la velocidad.
+    Combina resultados y logs.
     """
     # Lanzamos las dos funciones síncronas en paralelo usando hilos
     # Esto evita que una espere a la otra
@@ -194,9 +218,15 @@ async def buscar_en_todas_async():
         asyncio.to_thread(buscar_actiontoys)
     )
         
-    # Aplanar resultados
-    lista_final = [item for sublist in resultados for item in sublist]
-    return lista_final
+    # Aplanar resultados y agregar logs
+    lista_productos = []
+    lista_logs = []
+    
+    for res in resultados:
+        lista_productos.extend(res['items'])
+        lista_logs.extend(res['log'])
+        
+    return lista_productos, lista_logs
 
 # --- CACHÉ Y WRAPPER ---
 # TTL = 3600 segundos (1 hora). show_spinner=False para controlar mensaje propio
@@ -254,7 +284,7 @@ if start:
 
     with st.spinner("⚡ Escaneando el multiverso (Paralelo)..."):
         # Llamada a la función con caché
-        datos = obtener_datos_cacheados()
+        datos, logs_debug = obtener_datos_cacheados()
         
         if datos:
             df = pd.DataFrame(datos)
@@ -287,6 +317,9 @@ if start:
             items_unicos.sort(key=lambda x: x['PrecioMin'])
             
             st.success(f"¡Combate finalizado! {len(items_unicos)} figuras únicas encontradas (de {len(df)} ofertas).")
+            with st.expander("📝 Logs técnicos (Click para ver)"):
+                st.write(logs_debug)
+                
             st.divider()
 
             # --- RENDERIZADO DE TARJETAS ---
@@ -314,4 +347,15 @@ if start:
                             c2.link_button("Ir", oferta['Enlace'], help=f"Comprar en {oferta['Tienda']}")
                             
         else:
-            st.warning("No se encontraron resultados. ¿Están caídas las webs?")
+            st.error("❌ No se encontraron resultados.")
+            
+            # MOSTRAR LOGS EN PANTALLA PRINCIPAL SI FALLA
+            st.warning("Parece que Skeletor ha bloqueado la conexión. Aquí tienes el informe técnico:")
+            with st.container(border=True):
+                st.markdown("### 🕵️‍♂️ Informe de Debugging")
+                for linea in logs_debug:
+                    if "❌" in linea or "⚠️" in linea:
+                        st.error(linea)
+                    else:
+                        st.text(linea)
+
