@@ -179,16 +179,21 @@ async def buscar_actiontoys(page):
             
     return productos
 
-# --- ORQUESTADOR PARALELO ---
+# ORQUESTADOR PARALELO
 async def buscar_en_todas_async():
     """Ejecuta los scrapers en paralelo para mejorar velocidad."""
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
+        # Args críticos para evitar crash en Docker/Cloud
+        browser = await p.chromium.launch(
+            headless=True, 
+            args=["--no-sandbox", "--disable-dev-shm-usage"]
+        )
         # Contexto compartido optimizado
         context = await browser.new_context(
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36",
             viewport={'width': 1280, 'height': 800}
         )
+
         
         # Abrimos 2 páginas en paralelo (pestañas)
         page1 = await context.new_page()
