@@ -167,16 +167,21 @@ def buscar_actiontoys():
                     link_elem = item.select_one('a.product-loop-title')
                     if not link_elem: link_elem = item.select_one('a.woocommerce-LoopProduct-link') 
                     if not link_elem: 
-                        # log.append(f"⚠️ Link missing p{pagina_num}")
+                        if items_ok_pag < 3: log.append(f"⚠️ Link missing p{pagina_num} item {items_ok_pag}")
                         continue
                     link = link_elem['href']
                     
                     titulo_obj = link_elem.select_one('h3') or item.select_one('h2.woocommerce-loop-product__title')
                     titulo = titulo_obj.get_text(strip=True) if titulo_obj else "Desconocido"
                     
-                    if not any(x in titulo.lower() for x in ["origins", "motu", "masters", "he-man", "skeletor"]): 
-                        # log.append(f"🗑️ Filtered: {titulo}")
-                        continue
+                    # LOG DE DEBUG (Solo primeros 3 por pagina)
+                    if items_ok_pag < 3:
+                        log.append(f"🔎 Debug p{pagina_num}: Título='{titulo}' Link='{link}'")
+                    
+                    # FILTRO DESACTIVADO TEMPORALMENTE (Para forzar resultados)
+                    # if not any(x in titulo.lower() for x in ["origins", "motu", "masters", "he-man", "skeletor"]): 
+                    #    if items_ok_pag < 3: log.append(f"🗑️ Filtered: {titulo}")
+                    #    continue
 
                     precio_obj = item.select_one('span.price')
                     precio = "Agotado"
