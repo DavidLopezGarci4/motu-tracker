@@ -240,9 +240,18 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # Botón Principal
-start = st.button("🚀 RASTREAR OFERTAS", type="primary")
+col_btn1, col_btn2 = st.columns([3, 1])
+if col_btn1.button("🚀 RASTREAR OFERTAS", type="primary"):
+    start = True
+else:
+    start = False
+
+if col_btn2.button("🧹 LIMPIAR CACHÉ"):
+    st.cache_data.clear()
+    st.toast("Memoria borrada. La próxima búsqueda será fresca.", icon="🧹")
 
 if start:
+
     with st.spinner("⚡ Escaneando el multiverso (Paralelo)..."):
         # Llamada a la función con caché
         datos = obtener_datos_cacheados()
