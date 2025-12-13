@@ -147,64 +147,81 @@ def buscar_kidinn():
             items = soup.select('div.product-grid-item, div.search-product-item, div.item, div.item_container, div[data-id]')
             log.append(f"⚠️ Selector principal falló. Fallbacks encontraron: {len(items)}")
             
-            # Último intento: Buscar enlaces directos si no hay cajas
+            # Último intento: Buscar enlaces directos de PRODUCTOS (terminan en /p)
             if not items:
-                 potential_links = soup.select('a[href*="/kidinn/es/"]')
-                 # Filtramos enlaces que parezcan de producto (tienen ID numérico o 'masters')
-                 potential_links = [l for l in potential_links if "masters" in l['href'] or re.search(r'\/\d+\/', l['href'])]
-                 if potential_links:
-                     items = [p.parent for p in potential_links[:36]] 
-                     log.append(f"⚠️ Fallback enlaces directos encontró: {len(items)}")
+                 # TradeInn usa /p para productos, /f para familias, /nm para nodos
+                 potential_links = soup.select('a[href*="/p"]') 
+                 # Filtramos para asegurar que son fichas de producto
+                 items = []
+                 for l in potential_links:
+                     href = l.get('href', '')
+                     # Debe tener /p y NO ser una paginación o script, y tener algun ID numérico
+                     if '/p' in href and re.search(r'\/\d+\/p', href):
+                         # Evitamos enlaces de menú que a veces se cuelan
+                         if 'nav' not in l.get('class', []) and 'menu' not in l.get('class', []):
+                             items.append(l.parent)
+                             
+                 # Deduplicar por link (a veces hay imagen + texto)
+                 unique_items = []
+                 seen_links = set()
+                 for it in items:
+                     lnk = it.select_one('a')['href']
+                     if lnk not in seen_links:
+                         unique_items.append(it)
+                         seen_links.add(lnk)
+                         
+                 items = unique_items[:48]
+                 log.append(f"⚠️ Fallback enlaces PRODUCTO (/p) encontró: {len(items)}")
 
         log.append(f"Items a procesar: {len(items)}")
         
         productos = []
         items_procesados = 0
         for idx, item in enumerate(items):
-            # DEBUG SUPREMO: Ver el HTML del primer item
+            # Clonamos el item para no romper el original en debug
+            debug_str = str(item)[:300]
             if idx == 0:
-                log.append(f"📦 DEBUG HTML KIDINN ITEM 0: {str(item)[:600]}")
+                log.append(f"📦 DEBUG HTML KIDINN ITEM 0: {debug_str}")
                 
             try:
                 # Link
                 link_obj = item.select_one('a')
                 if not link_obj: 
-                    # Intento buscar el link en el padre o en el item mismo si es un <a>
+                    # Si el item mismo es el link
                     if item.name == 'a': link_obj = item
                     else: continue
                 
-                if not link_obj: continue
-                    
                 link = link_obj['href']
                 if not link.startswith('http'): link = "https://www.tradeinn.com" + link
 
-                # Title - En búsqueda suele estar en h3 o p
-                titulo_obj = item.select_one('p.name, h3, div.product-title')
-                if not titulo_obj and link_obj: titulo_obj = link_obj.find(text=True)
+                # Title
+                # Buscamos texto dentro del enlace o en hermanos
+                titulo = link_obj.get_text(strip=True)
+                if not titulo: 
+                    # Intentar buscar imagen con alt
+                    img = link_obj.find('img')
+                    if img: titulo = img.get('alt', '')
                 
-                titulo = "Desconocido"
-                if titulo_obj:
-                    if hasattr(titulo_obj, 'get_text'): titulo = titulo_obj.get_text(strip=True)
-                    else: titulo = str(titulo_obj).strip()
+                if not titulo: titulo = "Figura MOTU Desconocida"
                 
-                # Filtro
-                if "motu" not in titulo.lower() and "masters" not in titulo.lower() and "origins" not in titulo.lower(): 
-                   # log.append(f"Skip title: {titulo}")
-                   continue
+                # Filtro RELAJADO: Si estamos aqui, el link ya tenia /p y venia de una busqueda de 'masters'
+                # Solo filtramos si es claramente basura
+                if "juguete" in titulo.lower() and len(titulo) < 15: continue
                 
                 # Price
-                price_candidates = item.select('div.price, span.price, p.price')
+                # Buscamos precio en el texto del padre
+                full_text = item.get_text(separator=' ', strip=True)
+                # Regex para buscar precio estilo 12,99 € o 12.99€
+                price_match = re.search(r'(\d+[\.,]\d{2})\s?[€$]', full_text)
+                
                 precio = "Ver Web"
                 precio_val = 9999.0
                 
-                for p in price_candidates:
-                    text = p.get_text(strip=True)
-                    if any(c in text for c in ['€', '$']):
-                        precio = text
-                        try:
-                            precio_val = float(text.replace('€','').replace('$','').replace(',','.').strip())
-                        except: pass
-                        break
+                if price_match:
+                    precio = price_match.group(0)
+                    try:
+                        precio_val = float(price_match.group(1).replace(',','.'))
+                    except: pass
                 
                 # Imagen
                 img_obj = item.select_one('img')
@@ -221,7 +238,6 @@ def buscar_kidinn():
                 })
                 items_procesados += 1
             except Exception as item_e:
-                 # log.append(f"Error item: {item_e}")
                  continue
                  
         log.append(f"Kidinn: {items_procesados} items extraídos.")
