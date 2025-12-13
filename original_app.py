@@ -25,12 +25,77 @@ st.set_page_config(page_title="Rastreador Master MOTU", page_icon="⚔️", layo
 # --- UTILIDADES DE NORMALIZACIÓN (NUEVO) ---
 import requests
 
-# --- CONFIGURACIÓN DE NAVEGADOR ESTÁTICO (MODO GOOGLEBOT) ---
+# --- CONFIGURACIÓN DE NAVEGADOR ESTÁTICO (HEADERS STANDARD) ---
+import json
+
 HEADERS_STATIC = {
-    "User-Agent": "Mozilla/5.0 (Linux; Android 6.0.1; Nexus 5X Build/MMB29P) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+    "Accept-Language": "es-ES,es;q=0.9,en;q=0.8",
     "Referer": "https://www.google.com/"
 }
+
+# --- HELPER: JSON-LD EXTRACTOR ---
+def extraer_datos_json_ld(soup, source_tag):
+    """Intenta extraer productos de metadatos JSON-LD (SEO)."""
+    productos = []
+    scripts = soup.find_all('script', type='application/ld+json')
+    
+    for script in scripts:
+        try:
+            data = json.loads(script.string)
+            # Normalizar a lista si es dict único
+            if isinstance(data, dict):
+                data = [data]
+            
+            for entry in data:
+                # Caso 1: ItemList (Catálogos)
+                if entry.get('@type') == 'ItemList' and 'itemListElement' in entry:
+                    for item in entry['itemListElement']:
+                        # A veces el producto está directo, a veces en 'item'
+                        prod = item.get('item', item)
+                        if not isinstance(prod, dict): continue
+                        
+                        titulo = prod.get('name', 'Desconocido')
+                        link = prod.get('url', 'No Link')
+                        if link == 'No Link' and 'url' in item: link = item['url'] # Fallback
+                        
+                        image = prod.get('image', None)
+                        if isinstance(image, list): image = image[0]
+                        elif isinstance(image, dict): image = image.get('url')
+                        
+                        price = 0.0
+                        price_str = "Ver Web"
+                        
+                        offers = prod.get('offers')
+                        if isinstance(offers, dict):
+                            price = float(offers.get('price', 0))
+                            price_str = f"{price}€"
+                        elif isinstance(offers, list) and offers:
+                            price = float(offers[0].get('price', 0))
+                            price_str = f"{price}€"
+                            
+                        # Filtro básico
+                        if "motu" not in titulo.lower() and "masters" not in titulo.lower(): continue
+                        
+                        productos.append({
+                            "Figura": titulo,
+                            "NombreNorm": limpiar_titulo(titulo),
+                            "Precio": price_str,
+                            "PrecioVal": price,
+                            "Tienda": source_tag,
+                            "Enlace": link,
+                            "Imagen": image
+                        })
+
+                # Caso 2: Product Single (Ficha de producto - raro en listados pero posible)
+                if entry.get('@type') == 'Product':
+                    titulo = entry.get('name', 'Desconocido')
+                    # ... (Lógica similar, simplificada por brevedad) ...
+                    # En listados suele ser ItemList.
+        except: continue
+        
+    return productos
 
 # --- FUNCIÓN 1: TRADEINN (Kidinn) ---
 def buscar_kidinn():
@@ -43,16 +108,21 @@ def buscar_kidinn():
         r = requests.get(url, headers=HEADERS_STATIC, timeout=15)
         log.append(f"Status Code: {r.status_code}")
         
-        if r.status_code != 200:
-            log.append(f"❌ Bloqueo detectado. Cabeceras respuesta: {r.headers}")
-            return {'items': [], 'log': log}
-            
         soup = BeautifulSoup(r.text, 'html.parser')
         
-        # Loguear Título para verificar donde estamos
-        page_title = soup.title.string.strip() if soup.title else "No Title"
-        log.append(f"Título de la página: {page_title}")
-
+        # ESTRATEGIA 1: JSON-LD (SEO DATA)
+        json_items = extraer_datos_json_ld(soup, "Kidinn")
+        if json_items:
+            log.append(f"✅ JSON-LD encontró {len(json_items)} items. Usando datos estructurados.")
+            # Ajuste de enlaces relativos si los hay
+            for p in json_items:
+                if not p['Enlace'].startswith('http'):
+                    p['Enlace'] = "https://www.tradeinn.com" + p['Enlace']
+            return {'items': json_items, 'log': log}
+            
+        log.append("⚠️ JSON-LD no encontró nada. Probando selectores HTML...")
+        
+        # ESTRATEGIA 2: HTML SCRAPING (FALLBACK)
         items = soup.select('div.js-product-list-item')
         if not items:
             # Fallback selectors (Broad)
@@ -155,6 +225,22 @@ def buscar_actiontoys():
             soup = BeautifulSoup(r.text, 'html.parser')
             page_title = soup.title.string.strip() if soup.title else "No Title"
             log.append(f"Título p{pagina_num}: {page_title}")
+            
+            # ESTRATEGIA 1: JSON-LD (SEO DATA)
+            json_items = extraer_datos_json_ld(soup, "ActionToys")
+            if json_items:
+                log.append(f"✅ JSON-LD p{pagina_num}: {len(json_items)} items encontrados.")
+                productos.extend(json_items)
+                
+                # Chequear paginación via link 'next'
+                next_button = soup.select_one('a.next') or soup.select_one('a[rel="next"]')
+                if next_button:
+                    url_actual = next_button['href']
+                    pagina_num += 1
+                    continue
+                else: break
+            
+            log.append("⚠️ JSON-LD vacío. Usando HTML Scraping...")
             
             items = soup.select('li.product, article.product-miniature, div.product-small')
             
