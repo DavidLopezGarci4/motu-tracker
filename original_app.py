@@ -501,7 +501,7 @@ if start:
                     if "❌" in linea or "⚠️" in linea:
                         st.error(linea)
                     else:
-                st.text(linea)
+                        st.text(linea)
 
 # --- DEBUGGING (Solapa para verificar sistema de archivos) ---
 with st.expander("🔧 Diagnóstico de Archivos (Debug)"):
