@@ -5,6 +5,7 @@ import asyncio
 from bs4 import BeautifulSoup
 import os
 from logger import log_structured
+from models import ProductOffer
 # import subprocess # REMOVED
 # import sys # REMOVED
 
