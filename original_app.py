@@ -24,6 +24,7 @@ st.set_page_config(page_title="Rastreador Master MOTU", page_icon="⚔️", layo
 
 # --- UTILIDADES DE NORMALIZACIÓN (NUEVO) ---
 import requests
+import re
 
 # --- CONFIGURACIÓN DE NAVEGADOR ESTÁTICO (HEADERS STANDARD) ---
 import json
