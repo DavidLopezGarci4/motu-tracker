@@ -1,22 +1,27 @@
 import streamlit as st
 import pandas as pd
 import asyncio
-# from playwright.async_api import async_playwright # REMOVED
-from bs4 import BeautifulSoup
+import aiohttp
 import os
+import json
 from logger import log_structured
 from models import ProductOffer
-# import subprocess # REMOVED
-# import sys # REMOVED
-
-# --- HACK DE DESPLIEGUE ELIMINADO ---
-# Playwright ha sido removido para mejorar performance y estabilidad.
+from scrape_run_report import ScrapeRunReporter, PageAudit # Integration
 
 
-# Configuración de página con layout ancho para que quepa bien la tabla
+# Import Plugins
+from scrapers.actiontoys import ActionToysScraper
+from scrapers.fantasiapersonajes import FantasiaScraper
+from scrapers.frikiverso import FrikiversoScraper
+from scrapers.pixelatoy import PixelatoyScraper
+from scrapers.electropolis import ElectropolisScraper
+from scrapers.dvdstorespain import DVDStoreSpainScraper
+
+
+# --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="Buscador MOTU Origins", layout="wide", page_icon="⚔️")
 
-# --- HEADER & ESTILOS ---
+# --- ESTILOS CSS GRID ---
 st.markdown("""
     <style>
     .main-header {
@@ -32,309 +37,12 @@ st.markdown("""
         font-style: italic;
         margin-bottom: 40px;
     }
-    </style>
-""", unsafe_allow_html=True)
-
-st.markdown("<h1 class='main-header'>⚔️ Buscador MOTU Origins ⚔️</h1>", unsafe_allow_html=True)
-st.markdown("<div class='sub-header'>Rastreador de precios para coleccionistas - Masters of the Universe</div>", unsafe_allow_html=True)
-
-# --- UTILIDADES DE NORMALIZACIÓN (NUEVO) ---
-import requests
-import re
-
-# --- CONFIGURACIÓN DE NAVEGADOR ESTÁTICO (HEADERS STANDARD) ---
-import json
-
-HEADERS_STATIC = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-    "Accept-Language": "es-ES,es;q=0.9,en;q=0.8",
-    "Referer": "https://www.google.com/"
-}
-
-def limpiar_titulo(titulo):
-    """Normaliza el título para agrupar productos similares."""
-    import re
-    # Eliminar palabras clave comunes para agrupar
-    t = titulo.lower()
-    t = re.sub(r'masters of the universe|motu|origins|masterverse|figura|action figure|\d+\s?cm', '', t)
-    t = re.sub(r'\s+', ' ', t).strip()
-    return t.title()
-
-# --- HELPER: JSON-LD EXTRACTOR ---
-def extraer_datos_json_ld(soup, source_tag):
-    """Intenta extraer productos de metadatos JSON-LD (SEO)."""
-    productos = []
-    scripts = soup.find_all('script', type='application/ld+json')
-    
-    for script in scripts:
-        try:
-            data = json.loads(script.string)
-            # Normalizar a lista si es dict único
-            if isinstance(data, dict):
-                data = [data]
-            
-            for entry in data:
-                # Caso 1: ItemList (Catálogos)
-                if entry.get('@type') == 'ItemList' and 'itemListElement' in entry:
-                    for item in entry['itemListElement']:
-                        # A veces el producto está directo, a veces en 'item'
-                        prod = item.get('item', item)
-                        if not isinstance(prod, dict): continue
-                        
-                        titulo = prod.get('name', 'Desconocido')
-                        link = prod.get('url', 'No Link')
-                        if link == 'No Link' and 'url' in item: link = item['url'] # Fallback
-                        
-                        image = prod.get('image', None)
-                        if isinstance(image, list): image = image[0]
-                        elif isinstance(image, dict): image = image.get('url')
-                        
-                        price = 0.0
-                        price_str = "Ver Web"
-                        
-                        offers = prod.get('offers')
-                        if isinstance(offers, dict):
-                            price = float(offers.get('price', 0))
-                            price_str = f"{price}€"
-                        elif isinstance(offers, list) and offers:
-                            price = float(offers[0].get('price', 0))
-                            price_str = f"{price}€"
-                            
-                        # Filtro básico
-                        if "motu" not in titulo.lower() and "masters" not in titulo.lower(): continue
-                        
-                        productos.append({
-                            "Figura": titulo,
-                            "NombreNorm": limpiar_titulo(titulo),
-                            "Precio": price_str,
-                            "PrecioVal": price,
-                            "Tienda": source_tag,
-                            "Enlace": link,
-                            "Imagen": image
-                        })
-
-                # Caso 2: Product Single (Ficha de producto - raro en listados pero posible)
-                if entry.get('@type') == 'Product':
-                    titulo = entry.get('name', 'Desconocido')
-                    # ... (Lógica similar, simplificada por brevedad) ...
-                    # En listados suele ser ItemList.
-        except: continue
-        
-    return productos
-
-# --- FUNCIÓN 1: TRADEINN (Kidinn) ---
-def buscar_kidinn():
-    """
-    Kidinn Scraper - DESACTIVADO TEMPORALMENTE (Fase H0).
-    Razón: Inestabilidad y falta de API pública fiable.
-    """
-    log = ["⚠️ Kidinn desactivado por mantenimiento (Fase H0)."]
-    return {'items': [], 'log': log}
-
-# --- FUNCIÓN 2: ACTION TOYS (API MODE) ---
-# --- FUNCIÓN 2: ACTION TOYS (API MODE VIA PLUGIN) ---
-from scrapers.actiontoys import ActionToysScraper
-from circuit_breaker import CircuitBreaker
-
-from scrapers.fantasiapersonajes import FantasiaScraper
-from scrapers.frikiverso import FrikiversoScraper
-
-@st.cache_resource
-def get_circuit_breaker():
-    return CircuitBreaker(failure_threshold=3, recovery_timeout=60)
-
-def buscar_actiontoys():
-    """Wrapper para usar el nuevo ActionToysScraper con Circuit Breaker."""
-    cb = get_circuit_breaker()
-    scraper = ActionToysScraper()
-    
-    if not scraper.is_active:
-        return {'items': [], 'log': ["⚠️ ActionToys desactivado."]}
-        
-    log = [f"⚡ Iniciando Plugin: {scraper.name}"]
-    productos = []
-    
-    try:
-        # Wrap search in Circuit Breaker
-        offers = cb.call(scraper.search, "masters of the universe origins")
-        log.append(f"✅ Plugin encontró {len(offers)} items.")
-        
-        # Mapping de Compatibilidad (Objeto -> Diccionario UI antigua)
-        for p in offers:
-            productos.append({
-                "Figura": p.name,
-                "NombreNorm": p.normalized_name,
-                "Precio": p.display_price,
-                "PrecioVal": p.price_val,
-                "Tienda": p.store_name,
-                "Enlace": p.url,
-                "Imagen": p.image_url
-            })
-            
-    except Exception as e:
-        log.append(f"❌ Error Critical Plugin / Circuit Open: {e}")
-        
-    return {'items': productos, 'log': log}
-
-def buscar_fantasia():
-    """Wrapper para usar el nuevo FantasiaScraper con Circuit Breaker."""
-    cb = get_circuit_breaker()
-    scraper = FantasiaScraper()
-    
-    # Check if active logic could be added here if needed
-    log = [f"⚡ Iniciando Plugin: {scraper.name}"]
-    productos = []
-    
-    try:
-        offers = cb.call(scraper.search, "masters of the universe origins")
-        log.append(f"✅ Plugin encontró {len(offers)} items.")
-        
-        for p in offers:
-            productos.append({
-                "Figura": p.name,
-                "NombreNorm": p.normalized_name,
-                "Precio": p.display_price,
-                "PrecioVal": p.price_val,
-                "Tienda": p.store_name,
-                "Enlace": p.url,
-                "Imagen": p.image_url
-            })
-    except Exception as e:
-        log.append(f"❌ Error Fantasia / Circuit Open: {e}")
-        
-    return {'items': productos, 'log': log}
-
-def buscar_frikiverso():
-    """Wrapper para Frikiverso."""
-    cb = get_circuit_breaker()
-    scraper = FrikiversoScraper()
-    log = [f"⚡ Iniciando Plugin: {scraper.name}"]
-    productos = []
-    try:
-        offers = cb.call(scraper.search, "masters of the universe origins")
-        log.append(f"✅ Plugin encontró {len(offers)} items.")
-        for p in offers:
-            productos.append({
-                "Figura": p.name,
-                "NombreNorm": p.normalized_name,
-                "Precio": p.display_price,
-                "PrecioVal": p.price_val,
-                "Tienda": p.store_name,
-                "Enlace": p.url,
-                "Imagen": p.image_url
-            })
-    except Exception as e:
-        log.append(f"❌ Error Frikiverso: {e}")
-    return {'items': productos, 'log': log}
-
-# --- ORQUESTADOR HÍBRIDO (ASYNC WRAPPER) ---
-async def buscar_en_todas_async():
-    """
-    Ejecuta scrapers síncronos (requests) en hilos separados (asyncio.to_thread)
-    para mantener el paralelismo y la velocidad.
-    Combina resultados y logs.
-    """
-    # Lanzamos las funciones síncronas en paralelo usando hilos
-    # Esto evita que una espere                # Attempt to load from snapshot first for "blocked" stores
-    snapshot_file = os.path.join(os.path.dirname(__file__), 'data', 'products_snapshot.json')
-    
-    fantasia_items = []
-    frikiverso_items = []
-    
-    snapshot_logs = []
-    if os.path.exists(snapshot_file):
-        try:
-            with open(snapshot_file, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                for p in data:
-                    # Fix missing currency if needed (backward compatibility)
-                    if 'currency' not in p:
-                        p['currency'] = '€'
-                        
-                    if p['store_name'] == "Fantasia Personajes":
-                        fantasia_items.append(ProductOffer(**p))
-                    elif p['store_name'] == "Frikiverso":
-                        frikiverso_items.append(ProductOffer(**p))
-            
-            msg = f"✅ SNAPSHOT CARGADO: Fantasia={len(fantasia_items)}, Frikiverso={len(frikiverso_items)}"
-            print(f"DEBUG_CONSOLE: {msg}") # Console log
-            log_structured("SNAPSHOT_LOADED", {"msg": msg})
-            snapshot_logs.append(msg)
-            
-        except Exception as e:
-            err_msg = f"❌ ERROR CARGANDO SNAPSHOT: {str(e)}"
-            print(f"DEBUG_CONSOLE: {err_msg}") # Console log
-            log_structured("SNAPSHOT_ERROR", {"error": str(e)})
-            snapshot_logs.append(err_msg)
-            
-    else:
-        warn_msg = f"⚠️ Archivo snapshot no encontrado en: {snapshot_file}"
-        print(f"DEBUG_CONSOLE: {warn_msg}") # Console log
-        snapshot_logs.append(warn_msg)
-
-    # Run scrapers (ActionToys always live, others if snapshot missing)
-    tasks = [asyncio.to_thread(buscar_actiontoys)]
-    
-    if not fantasia_items:
-        tasks.append(asyncio.to_thread(buscar_fantasia))
-        
-    if not frikiverso_items:
-        tasks.append(asyncio.to_thread(buscar_frikiverso))
-    
-    # Execute live tasks
-    live_results = await asyncio.gather(*tasks)
-    
-    # Combine everything
-    todos_los_productos = []
-    lista_logs = [] # Initialize logs list here
-    
-    for res in live_results:
-        todos_los_productos.extend(res['items'])
-        lista_logs.extend(res['log'])
-        
-    # Add snapshot logs to the UI logs
-    lista_logs.extend(snapshot_logs)
-        
-    # Add snapshot items to the product list (they don't have a 'log' entry in this structure)
-    for p_offer in fantasia_items + frikiverso_items:
-        todos_los_productos.append({
-            "Figura": p_offer.name,
-            "NombreNorm": p_offer.normalized_name,
-            "Precio": p_offer.display_price,
-            "PrecioVal": p_offer.price_val,
-            "Tienda": p_offer.store_name,
-            "Enlace": p_offer.url,
-            "Imagen": p_offer.image_url
-        })
-    
-    # Check Kidinn (Phase H3 Placeholder) - if it were active, it would be added to tasks
-    # For now, it's explicitly disabled and not included in the new gather logic.
-    
-    return todos_los_productos, lista_logs
-
-# --- CACHÉ Y WRAPPER ---
-# TTL = 3600 segundos (1 hora). show_spinner=False para controlar mensaje propio
-@st.cache_data(ttl=3600, show_spinner=False)
-def obtener_datos_cacheados():
-    """Llamada síncrona cacheada."""
-    return asyncio.run(buscar_en_todas_async())
-
-# --- INTERFAZ ---
-st.title("⚔️ Buscador Unificado MOTU Origins")
-
-# Estilos CSS Mejorados
-# Estilos CSS Mejorados (CSS Grid + Mobile First)
-st.markdown("""
-<style>
-    /* Contenedor Principal Grid */
     .product-grid {
         display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); /* 160px min width para móvil */
+        grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
         gap: 12px;
         padding: 10px 0;
     }
-    /* Tarjeta */
     .product-card {
         border: 1px solid #eee;
         border-radius: 10px;
@@ -350,15 +58,13 @@ st.markdown("""
     .product-card:active {
         transform: scale(0.98);
     }
-    /* Imagen */
     .product-img {
         width: 100%;
-        height: 140px; /* Altura fija contenida */
+        height: 140px;
         object-fit: contain;
         margin-bottom: 8px;
         background-color: #fff;
     }
-    /* Título */
     .product-title {
         font-size: 0.9rem;
         font-weight: 600;
@@ -366,12 +72,11 @@ st.markdown("""
         margin-bottom: 4px;
         line-height: 1.2;
         display: -webkit-box;
-        -webkit-line-clamp: 2; /* Max 2 líneas */
+        -webkit-line-clamp: 2;
         -webkit-box-orient: vertical;
         overflow: hidden;
-        height: 2.4em; /* Forzar altura alineada */
+        height: 2.4em;
     }
-    /* Precio y Tienda */
     .price-row {
         display: flex;
         justify-content: space-between;
@@ -392,7 +97,6 @@ st.markdown("""
         border-radius: 4px;
         color: #666;
     }
-    /* Botón */
     .action-btn {
         display: block;
         width: 100%;
@@ -409,137 +113,210 @@ st.markdown("""
     .action-btn:hover {
         opacity: 0.9;
     }
-    
-    /* MOBILE TWEAKS */
-    @media (max-width: 480px) {
-        .product-grid {
-            grid-template-columns: repeat(2, 1fr); /* Forzar 2 columnas en móvil */
-            gap: 8px;
-        }
-        .product-card {
-            padding: 8px;
-        }
-        .product-img {
-            height: 100px; /* Imagen más pequeña */
-        }
-        .product-title {
-            font-size: 0.8rem; /* Texto más compacto */
-            height: 2.8em; /* 3 líneas */
-            -webkit-line-clamp: 3;
-        }
-        .main-price {
-            font-size: 1rem;
-        }
-        .action-btn {
-            font-size: 0.8rem;
-            padding: 6px 0;
-        }
-    }
-</style>
+    </style>
 """, unsafe_allow_html=True)
 
-# Botón Principal
-col_btn1, col_btn2 = st.columns([3, 1])
-if col_btn1.button("🚀 RASTREAR OFERTAS", type="primary"):
-    start = True
-else:
-    start = False
+st.markdown("<h1 class='main-header'>⚔️ Buscador MOTU Origins ⚔️</h1>", unsafe_allow_html=True)
+st.markdown("<div class='sub-header'>Rastreador de precios para coleccionistas - Masters of the Universe</div>", unsafe_allow_html=True)
 
-if col_btn2.button("🧹 LIMPIAR CACHÉ"):
-    st.cache_data.clear()
-    st.toast("Memoria borrada. La próxima búsqueda será fresca.", icon="🧹")
+# --- QUERY & CACHE LOGIC ---
 
-if start:
+# --- QUERY & CACHE LOGIC ---
 
-    with st.spinner("⚡ Escaneando el multiverso..."):
-        # Llamada a la función con caché
-        datos, logs_debug = obtener_datos_cacheados()
+async def run_scrapers_parallel(query: str, progress_callback=None):
+    """
+    Orchestrates the async scraping using aiohttp.
+    """
+    results = []
+    logs = []
+    
+    # Plugins list
+    plugins = [
+        ActionToysScraper,
+        FantasiaScraper,
+        FrikiversoScraper,
+        PixelatoyScraper,
+        ElectropolisScraper,
+        DVDStoreSpainScraper
+    ]
+    total_plugins = len(plugins)
+    
+    # Initialize Reporter
+    reporter = ScrapeRunReporter(
+        category_name=query,
+        parallel_between_stores=True,
+        parallel_within_store=True,
+        environment="streamlit_async"
+    )
+    
+    async with aiohttp.ClientSession() as session:
+        # Instantiate plugins
+        active_scrapers = []
+        store_runs = {}
+        tasks = []
         
-        if datos:
-            df = pd.DataFrame(datos)
+        for PluginCls in plugins:
+            scraper = PluginCls(session=session)
+            active_scrapers.append(scraper)
             
-            # --- LÓGICA DE AGRUPACIÓN ---
-            grupos = df.groupby('NombreNorm')
-            items_unicos = []
+            # Register store debug info
+            sr = reporter.store_start(scraper.name, "ASYNC_HTML_API", scraper.base_url)
+            store_runs[scraper.name] = sr
             
-            for nombre, grupo in grupos:
-                img_candidata = grupo['Imagen'].dropna().iloc[0] if not grupo['Imagen'].dropna().empty else "https://via.placeholder.com/150?text=No+Image"
-                ofertas = grupo.sort_values('PrecioVal').to_dict('records')
-                precio_min = ofertas[0]['Precio']
+        # Prepare tasks with name wrapping to keep track of who finished
+        tasks = []
+        for scraper in active_scrapers:
+            # We wrap the coroutine to return the scraper name too
+            async def wrapped_search(s=scraper):
+                return s, await s.search(query)
+            
+            tasks.append(asyncio.create_task(wrapped_search()))
+            logs.append(f"⚡ Iniciando: {scraper.name}")
+            
+        # Execute Concurrently with Progress Updates
+        completed_count = 0
+        
+        for finished_task in asyncio.as_completed(tasks):
+            try:
+                # Unpack the result from our wrapper
+                scraper_obj, outcome = await finished_task
+                completed_count += 1
                 
-                # Link principal (la oferta más barata)
-                link_principal = ofertas[0]['Enlace']
-                tienda_principal = ofertas[0]['Tienda']
+                if progress_callback:
+                    progress_callback(completed_count / total_plugins)
+
+                if isinstance(outcome, list):
+                    results.extend(outcome)
+                    logs.append(f"✅ {scraper_obj.name}: {len(outcome)} items encontrados.")
+                elif isinstance(outcome, Exception):
+                     logs.append(f"❌ {scraper_obj.name} Error: {str(outcome)}")
+                     
+            except Exception as e:
+                logs.append(f"❌ CRITICAL TASK ERROR: {e}")
+        
+    # Finalize Report
+    report_path = reporter.finalize()
+    logs.append(f"📄 Informe generado: {report_path}")
                 
-                items_unicos.append({
-                    "Nombre": nombre,
-                    "Imagen": img_candidata,
-                    "PrecioDisplay": precio_min,
-                    "PrecioVal": ofertas[0]['PrecioVal'],
-                    "Tienda": tienda_principal,
-                    "Link": link_principal,
-                    "NumOfertas": len(ofertas)
+    return results, logs
+
+def render_sword_progress(percent: float):
+    """Renders a custom HTML progress bar with a Sword indicator."""
+    pct_int = int(percent * 100)
+    
+    # Helper to prevent sword from overflowing right edge
+    sword_pos = f"calc({pct_int}% - 20px)" if pct_int > 5 else f"{pct_int}%"
+    
+    bar_html = f"""
+    <div style="width: 100%; background-color: #e0e0e0; border-radius: 10px; height: 24px; position: relative; margin-top: 10px; margin-bottom: 24px; box-shadow: inset 0 1px 3px rgba(0,0,0,0.2);">
+        <div style="width: {pct_int}%; background-color: #B22222; height: 100%; border-radius: 10px; transition: width 0.5s ease; box-shadow: 0 0 10px rgba(178, 34, 34, 0.5);"></div>
+        <div style="position: absolute; width: 100%; text-align: center; top: 2px; font-size: 14px; color: white; font-weight: 800; text-shadow: 1px 1px 2px black; z-index: 5;">{pct_int}%</div>
+        <div style="position: absolute; left: {sword_pos}; top: -20px; font-size: 32px; transition: left 0.5s ease; z-index: 10; filter: drop-shadow(2px 2px 2px rgba(0,0,0,0.5));">⚔️</div>
+    </div>
+    """
+    st.markdown(bar_html, unsafe_allow_html=True)
+
+# Main Execution Wrapper
+async def execute_search(query):
+    progress_placeholder = st.empty()
+    
+    def update_bar(p):
+        with progress_placeholder.container():
+             render_sword_progress(p)
+             
+    # Initial render
+    update_bar(0.0)
+    
+    products, logs = await run_scrapers_parallel(query, progress_callback=update_bar)
+    
+    # Final render 100%
+    update_bar(1.0)
+    await asyncio.sleep(0.5) 
+    progress_placeholder.empty() # Clear bar after done
+    
+    return products, logs
+
+# --- UI CONTROLS ---
+
+col1, col2 = st.columns([3, 1])
+start_btn = col1.button("🚀 RASTREAR OFERTAS", type="primary")
+if col2.button("🧹 LIMPIAR CACHÉ"):
+    st.cache_data.clear()
+    st.toast("Caché limpiada.", icon="🧹")
+
+# --- MAIN EXECUTION ---
+if start_btn:
+    # No st.spinner here because we use the custom sword bar!
+    # st.markdown("### ⚔️ Escaneando los confines de Eternia...")
+    
+    # Run Async without cache for now to demonstrate bar (or adapt cache to store results only)
+    # Caching the *Progress Bar* is impossible.
+    # So we use cache_data on the RESULT, but the progress bar only shows on MISS.
+    # To show bar every time, we might skip cache or manage it differently.
+    # User asked for bar -> implies they want to see it load.
+    
+    all_products, debug_logs = asyncio.run(execute_search("masters of the universe"))
+    
+    # ... Processing DataFrame code (unchanged) ...
+    if all_products:
+        
+        if all_products:
+            # Convert to DataFrame for Grouping
+            data_dicts = []
+            for p in all_products:
+                data_dicts.append({
+                    "Nombre": p.name,
+                    "PrecioVal": p.price_val,
+                    "PrecioDisplay": p.display_price,
+                    "Tienda": p.store_name,
+                    "Enlace": p.url,
+                    "Imagen": p.image_url,
+                    "NombreNorm": p.normalized_name
+                })
+                
+            df = pd.DataFrame(data_dicts)
+            
+            # --- GROUPING LOGIC ---
+            # Group by Normalized Name to show "X ofertas"
+            grouped_items = []
+            for norm_name, group in df.groupby("NombreNorm"):
+                # Sort group by price
+                sorted_group = group.sort_values("PrecioVal")
+                best_offer = sorted_group.iloc[0]
+                
+                # Image Strategy: First valid image in group
+                valid_imgs = group['Imagen'].dropna()
+                img = valid_imgs.iloc[0] if not valid_imgs.empty else "https://via.placeholder.com/150"
+                
+                grouped_items.append({
+                    "Nombre": best_offer["Nombre"], # Use title of best offer
+                    "Imagen": img,
+                    "PrecioDisplay": best_offer["PrecioDisplay"],
+                    "PrecioVal": best_offer["PrecioVal"],
+                    "Tienda": best_offer["Tienda"],
+                    "Link": best_offer["Enlace"],
+                    "NumOfertas": len(group)
                 })
             
-            # Ordenar por precio
-            items_unicos.sort(key=lambda x: x['PrecioVal'])
+            # Final Sort by Price
+            grouped_items.sort(key=lambda x: x['PrecioVal'])
             
-            # Notificación visual si se usó Snapshot
-            for log in logs_debug:
-                if "SNAPSHOT CARGADO" in log:
-                    st.toast(log, icon="📂")
+            # Render Grid
+            st.success(f"¡Combate finalizado! {len(grouped_items)} figuras únicas encontradas.")
             
-            st.success(f"¡Combate finalizado! {len(items_unicos)} figuras únicas encontradas.")
-            with st.expander("📝 Logs técnicos"):
-                st.write(logs_debug)
-                
-            st.divider()
-
-            # --- RENDERIZADO HTML GRID ---
             html_cards = ""
-            for item in items_unicos:
-                # Badge de "Más ofertas"
-                more_offers = f"<span title='{item['NumOfertas']} ofertas disponibles'>+{item['NumOfertas']-1} más</span>" if item['NumOfertas'] > 1 else ""
-                
-                # IMPORTANT: No indentar el HTML dentro del string para evitar que Markdown lo interprete como código.
-                card_html = f"""
-<div class="product-card">
-<img src="{item['Imagen']}" class="product-img" loading="lazy" alt="{item['Nombre']}">
-<div class="product-title">{item['Nombre']}</div>
-<div class="price-row">
-<span class="main-price">{item['PrecioDisplay']}</span>
-<span class="store-badge">{item['Tienda']} {more_offers}</span>
-</div>
-<a href="{item['Link']}" target="_blank" class="action-btn">VER OFERTA</a>
-</div>
-"""
-                html_cards += card_html
-
+            for item in grouped_items:
+                 more_offers = f"<span title='{item['NumOfertas']} ofertas disponibles'>+{item['NumOfertas']-1} más</span>" if item['NumOfertas'] > 1 else ""
+                 
+                 # Minified HTML to prevent Markdown parser issues
+                 card_html = f"""<div class="product-card"><img src="{item['Imagen']}" class="product-img" loading="lazy" alt="{item['Nombre']}"><div class="product-title">{item['Nombre']}</div><div class="price-row"><span class="main-price">{item['PrecioDisplay']}</span><span class="store-badge">{item['Tienda']} {more_offers}</span></div><a href="{item['Link']}" target="_blank" class="action-btn">VER OFERTA</a></div>"""
+                 html_cards += card_html
+                 
             st.markdown(f'<div class="product-grid">{html_cards}</div>', unsafe_allow_html=True)
-                            
-        else:
-            st.error("❌ No se encontraron resultados.")
             
-            # MOSTRAR LOGS EN PANTALLA PRINCIPAL SI FALLA
-            st.warning("Parece que Skeletor ha bloqueado la conexión. Aquí tienes el informe técnico:")
-            with st.container(border=True):
-                st.markdown("### 🕵️‍♂️ Informe de Debugging")
-                for linea in logs_debug:
-                    if "❌" in linea or "⚠️" in linea:
-                        st.error(linea)
-                    else:
-                        st.text(linea)
-
-# --- DEBUGGING (Solapa para verificar sistema de archivos) ---
-with st.expander("🔧 Diagnóstico de Archivos (Debug)"):
-    st.write("Directorio actual:", os.getcwd())
-    st.write("Archivos en raíz:", os.listdir('.'))
-    if os.path.exists('data'):
-        st.write("Archivos en /data:", os.listdir('data'))
-    else:
-        st.error("⚠️ La carpeta 'data' NO existe.")
-        
-    snapshot_path = os.path.join(os.path.dirname(__file__), 'data', 'products_snapshot.json')
-    st.write(f"Ruta esperada JSON: {snapshot_path}")
-    st.write(f"¿Existe?: {os.path.exists(snapshot_path)}")
-
+            with st.expander("📝 Logs Técnicos (Async Build)"):
+                st.write(debug_logs)
+                
+        else:
+            st.error("No se encontraron productos.")
+            st.write(debug_logs)

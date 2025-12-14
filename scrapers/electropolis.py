@@ -4,51 +4,47 @@ from logger import log_structured
 from bs4 import BeautifulSoup
 import time
 import urllib.parse
-import asyncio
 
-class FantasiaScraper(AsyncScraperPlugin):
+class ElectropolisScraper(AsyncScraperPlugin):
     """
-    Async Scraper for Fantasia Personajes (PrestaShop).
-    Uses 'resultsPerPage=100' + Async Pagination to ensure full coverage.
+    Async Scraper for Electropolis.
+    Target: https://www.electropolis.es/zona-freaky/figuras/figuras.html?licencia=99325&marcas=92264&product_list_dir=asc
     """
     
     @property
     def name(self) -> str:
-        return "Fantasia Personajes"
+        return "Electropolis"
 
     @property
     def base_url(self) -> str:
-        return "https://fantasiapersonajes.es/buscar"
+        return "https://www.electropolis.es/zona-freaky/figuras/figuras.html"
 
     async def search(self, query: str) -> list[ProductOffer]:
         start_time = time.time()
         products = []
         seen_urls = set()
         
-        # We will attempt to fetch up to 10 pages concurrently to be fast,
-        # but PrestaShop Search usually puts everything in few pages if we raise resultsPerPage.
-        # Let's try sequential-async loop to be reliable and stop exactly when needed.
+        # Facet Params from User
+        # licencia=99325 (Masters likely)
+        # marcas=92264 (Mattel likely)
         
         page = 1
         has_more = True
-        consecutive_empty = 0
         
-        while has_more and page <= 10: # Safety limit 10 pages * 100 items = 1000 items
+        while has_more and page <= 10:
             params = {
-                "controller": "search",
-                "s": query,
-                "order": "product.position.desc",
-                "resultsPerPage": "100", # Max reliable usually
-                "page": page
+                "licencia": "99325",
+                "marcas": "92264",
+                "product_list_dir": "asc",
+                "p": page # Standard Magento/Varien pagination param 'p'
             }
             
             try:
                 html = await self.fetch(self.base_url, params=params)
-                if not html:
-                    break
+                if not html: break
                 
                 soup = BeautifulSoup(html, 'html.parser')
-                items = soup.select('.product-miniature')
+                items = soup.select('.item.product.product-item') # Standard Magento classes
                 
                 if not items:
                     break
@@ -56,7 +52,7 @@ class FantasiaScraper(AsyncScraperPlugin):
                 new_items_count = 0
                 for item in items:
                     try:
-                        title_elem = item.select_one('.product-title a')
+                        title_elem = item.select_one('.product-item-link')
                         if not title_elem: continue
                         
                         title = title_elem.get_text(strip=True)
@@ -65,12 +61,10 @@ class FantasiaScraper(AsyncScraperPlugin):
                         if link in seen_urls: continue
                         seen_urls.add(link)
                         
-                        img_elem = item.select_one('.thumbnail-container img')
-                        image_url = None
-                        if img_elem:
-                            image_url = img_elem.get('data-src') or img_elem.get('src')
+                        img_elem = item.select_one('.product-image-photo')
+                        image_url = img_elem.get('src') if img_elem else None
                         
-                        price_elem = item.select_one('.product-price') or item.select_one('.price')
+                        price_elem = item.select_one('.price')
                         price_str = price_elem.get_text(strip=True) if price_elem else "0.00€"
                         
                         offer = ProductOffer(
@@ -87,26 +81,21 @@ class FantasiaScraper(AsyncScraperPlugin):
                         
                     except Exception:
                         continue
-                        
-                if new_items_count == 0:
-                     consecutive_empty += 1
-                else:
-                     consecutive_empty = 0
-                     
-                if consecutive_empty >= 2:
-                    break
                 
-                # Check for "next" button to be sure
-                next_btn = soup.select_one('.next')
-                if not next_btn:
+                if new_items_count == 0:
+                    break
+
+                # Pagination Check
+                pages_item_next = soup.select_one('.pages-item-next')
+                if not pages_item_next:
                     has_more = False
                 
                 page += 1
                 
             except Exception as e:
-                self.logger.error(f"Error scraping Fantasia page {page}: {e}")
+                self.logger.error(f"Error scraping Electropolis page {page}: {e}")
                 break
-        
+            
         duration = time.time() - start_time
         log_structured("SCRAPE_END", self.name, items_found=len(products), duration_seconds=round(duration, 2))
         return products
