@@ -27,6 +27,75 @@ def load_image_as_base64(path):
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="Buscador Coleccionista", layout="wide", page_icon="⚔️")
 
+# --- SECURITY: BASIC AUTH ---
+def check_password():
+    """Returns `True` if the user had the correct password."""
+
+    def password_entered():
+        """Checks whether a password entered by the user is correct."""
+        if st.session_state["password"] == st.session_state["correct_password"]:
+            st.session_state["password_correct"] = True
+            del st.session_state["password"]  # don't store password
+        else:
+            st.session_state["password_correct"] = False
+
+    if "password_correct" not in st.session_state:
+        # First run, show input for password.
+        st.session_state["password_correct"] = False
+        
+        # Determine the password
+        # 1. Try Streamlit Secrets
+        # 2. Fallback to 'motu' for local dev if secrets.toml missing
+        try:
+            st.session_state["correct_password"] = st.secrets["password"]
+        except Exception:
+            st.session_state["correct_password"] = "motu" # DEV FALLBACK
+
+    if st.session_state["password_correct"]:
+        return True
+
+    # Show Login
+    st.markdown("""
+    <style>
+    /* Simple Login Styles */
+    .stTextInput > div > div > input {
+        text-align: center; 
+    }
+    </style>
+    """, unsafe_allow_html=True)
+    
+    col1, col2, col3 = st.columns([1,1,1])
+    with col2:
+        # Custom Header with Shield Image
+        if os.path.exists("escudo.png"):
+            b64_shield = load_image_as_base64("escudo.png")
+            st.markdown(f"""
+                <div style="display: flex; align-items: center; justify-content: center; gap: 10px; margin-bottom: 20px;">
+                    <img src="data:image/png;base64,{b64_shield}" style="width: 40px; height: 40px; object-fit: contain;">
+                    <h3 style="margin: 0; padding: 0;">Acceso Restringido</h3>
+                </div>
+            """, unsafe_allow_html=True)
+        else:
+            st.markdown("<h3 style='text-align: center;'>🛡️ Acceso Restringido</h3>", unsafe_allow_html=True)
+
+        st.text_input(
+            "Contraseña", 
+            type="password", 
+            on_change=password_entered, 
+            key="password",
+            placeholder="Introduce la clave..."
+        )
+        if "password_correct" in st.session_state and not st.session_state["password_correct"]:
+             st.error("⛔ Clave incorrecta")
+        
+        st.caption("Nota: Si no has configurado 'secrets.toml', la clave por defecto es: `motu`")
+
+    return False
+
+if not check_password():
+    st.stop()
+
+
 # --- ESTILOS CSS GRID & MOBILE OPTIMIZATIONS ---
 st.markdown("""
     <style>
@@ -130,6 +199,25 @@ with c2:
 
 # --- QUERY & CACHE LOGIC ---
 
+# ... imports ...
+from circuit_breaker import CircuitBreaker
+
+# ...
+
+# ... imports ...
+import random
+
+# ...
+
+# --- BROWSER CAMOUFLAGE ---
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Edge/120.0.0.0",
+]
+
 async def run_scrapers_parallel(query: str, progress_callback=None):
     results = []
     logs = []
@@ -143,6 +231,10 @@ async def run_scrapers_parallel(query: str, progress_callback=None):
     ]
     total_plugins = len(plugins)
     
+    # Initialize Circuit Breakers (One per scraper type)
+    if 'circuit_breakers' not in st.session_state:
+        st.session_state.circuit_breakers = {p.__name__: CircuitBreaker(failure_threshold=3, recovery_timeout=60) for p in plugins}
+    
     reporter = ScrapeRunReporter(
         category_name=query,
         parallel_between_stores=True,
@@ -150,7 +242,15 @@ async def run_scrapers_parallel(query: str, progress_callback=None):
         environment="streamlit_async"
     )
     
-    async with aiohttp.ClientSession() as session:
+    # CAMOUFLAGE: Select a random User-Agent for this session
+    current_ua = random.choice(USER_AGENTS)
+    headers = {
+        "User-Agent": current_ua,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "Accept-Language": "es-ES,es;q=0.9,en;q=0.8",
+    }
+    
+    async with aiohttp.ClientSession(headers=headers) as session:
         active_scrapers = []
         tasks = []
         
@@ -161,8 +261,30 @@ async def run_scrapers_parallel(query: str, progress_callback=None):
             
         tasks = []
         for scraper in active_scrapers:
-            async def wrapped_search(s=scraper):
-                return s, await s.search(query)
+            # Wrap execution with Circuit Breaker
+            breaker = st.session_state.circuit_breakers.get(type(scraper).__name__)
+            
+            async def wrapped_search(s=scraper, b=breaker):
+                if b and b.state == "OPEN":
+                    return s, Exception(f"🛡️ Circuit Breaker OPEN for {s.name}. Skipping to prevent ban.")
+                
+                try:
+                    # We manually track success/failure because CircuitBreaker.call is synchronous 
+                    # and our search is async. We adapt the logic here.
+                    outcome = await s.search(query)
+                    
+                    if b and b.state == "HALF-OPEN":
+                        b.state = "CLOSED"
+                        b.failures = 0
+                        
+                    return s, outcome
+                except Exception as e:
+                    if b:
+                        b.failures += 1
+                        b.last_failure_time = time.time()
+                        if b.failures >= b.failure_threshold:
+                            b.state = "OPEN"
+                    raise e
             
             tasks.append(asyncio.create_task(wrapped_search()))
             
@@ -180,10 +302,12 @@ async def run_scrapers_parallel(query: str, progress_callback=None):
                     results.extend(outcome)
                     logs.append(f"✅ {scraper_obj.name}: {len(outcome)} items found.")
                 elif isinstance(outcome, Exception):
-                     logs.append(f"❌ {scraper_obj.name} Error: {str(outcome)}")
+                     logs.append(f"❌ {scraper_obj.name} Protegido/Error: {str(outcome)}")
                      
             except Exception as e:
-                logs.append(f"❌ CRITICAL ERROR: {e}")
+                # This catches the 'raise e' from wrapped_search
+                # We need to map it back to a scraper name if possible, or just log generic
+                logs.append(f"⚠️ Error controlado en búsqueda: {e}")
         
     report_path = reporter.finalize()
     logs.append(f"📄 Report: {report_path}")
