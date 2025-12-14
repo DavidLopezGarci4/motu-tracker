@@ -88,7 +88,7 @@ def check_password():
         if "password_correct" in st.session_state and not st.session_state["password_correct"]:
              st.error("⛔ Clave incorrecta")
         
-        st.caption("Nota: Si no has configurado 'secrets.toml', la clave por defecto es: `motu`")
+
 
     return False
 
