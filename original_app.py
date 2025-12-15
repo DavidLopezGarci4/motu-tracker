@@ -314,74 +314,157 @@ async def run_scrapers_parallel(query: str, progress_callback=None):
                 
     return results, logs
 
+# --- OLD PROCEDURAL SWORD (Commented out as requested) ---
+# def render_sword_progress(percent: float):
+#     """
+#     Sword Progress Bar V8 - "Power of Grayskull" Edition.
+#     Features massive exterior glow and fluid internal gradient.
+#     """
+#     pct_int = int(percent * 100)
+#     
+#     # IDs
+#     mask_id = f"mask_{pct_int}"
+#     grad_id = f"grad_{pct_int}"
+#     blur_filter_id = f"blur_{pct_int}"
+#     
+#     # PATH DEFINITION
+#     # Reusing the exact same path data for all layers to ensure alignment
+#     sword_path = "M10,30 L40,18 L250,18 C260,18 260,8 280,8 L295,8 C305,8 305,24 315,24 L360,24 C370,24 370,36 360,36 L315,36 C305,36 305,52 295,52 L280,52 C260,52 260,42 250,42 L40,42 Z"
+#     
+#     svg_code = f"""
+#     <svg width="100%" height="80" viewBox="0 -10 400 80" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">
+#         <defs>
+#             <!-- 1. FLUID ENERGY GRADIENT (Core) -->
+#             <linearGradient id="{grad_id}" x1="0%" y1="0%" x2="100%" y2="0%">
+#                 <stop offset="0%" stop-color="#FFFFFF" />    <!-- White Source -->
+#                 <stop offset="30%" stop-color="#00FFFF" />   <!-- Cyan Plasma -->
+#                 <stop offset="100%" stop-color="#0088FF" />  <!-- Electric Blue -->
+#             </linearGradient>
+#             
+#             <!-- 2. BLUR FILTER (For Exterior Glow) -->
+#             <filter id="{blur_filter_id}" x="-50%" y="-50%" width="200%" height="200%">
+#                 <feGaussianBlur stdDeviation="4" result="coloredBlur"/>
+#             </filter>
+#             
+#             <!-- 3. PROGRESS MASK -->
+#             <mask id="{mask_id}">
+#                 <!-- White reveals. We use a rect that grows with % -->
+#                 <rect x="0" y="-10" width="{pct_int}%" height="100" fill="white" />
+#             </mask>
+#         </defs>
+#         
+#         <g stroke="none">
+#              <!-- LAYER 1: BASE (The Empty Sword Container) -->
+#              <path d="{sword_path}" fill="#222" stroke="#444" stroke-width="1" />
+#              
+#              <!-- LAYER 2: THE ENERGY (Masked by Progress) -->
+#              <g mask="url(#{mask_id})">
+#                  <!-- A. OUTSIDE GLOW (Behind) -->
+#                  <!-- We draw the same sword, filled with bright CYAN, and heavily blurred -->
+#                  <path d="{sword_path}" fill="#00FFFF" filter="url(#{blur_filter_id})" opacity="0.8" />
+#                  
+#                  <!-- B. FLUID CORE (Front) -->
+#                  <!-- We draw the sword again, filled with the gradient -->
+#                  <path d="{sword_path}" fill="url(#{grad_id})" />
+#              </g>
+#              
+#              <!-- LAYER 3: HARDWARE DETAILS (Overlay) -->
+#              <!-- Handle/Guard details that should sit ON TOP of the glow logic -->
+#              <path d="M40,30 L250,30" stroke="#003366" stroke-width="1" stroke-opacity="0.3" />
+#              <path d="M265,24 L300,24" stroke="#003366" stroke-width="1" stroke-opacity="0.5" />
+#              <path d="M265,36 L300,36" stroke="#003366" stroke-width="1" stroke-opacity="0.5" />
+#         </g>
+#         
+#         <text x="200" y="65" font-family="Arial, sans-serif" font-size="11" fill="#777" text-anchor="middle">
+#              {pct_int}%
+#         </text>
+#     </svg>
+#     """
+#     
+#     svg_code_oneline = " ".join(svg_code.split())
+#     st.markdown(f'<div style="text-align: center; margin: 5px 0;">{svg_code_oneline}</div>', unsafe_allow_html=True)
+
+# --- FINAL REPAIR: INLINE SVG MASKING ---
+@st.cache_data
+def get_sword_content():
+    """
+    Reads the raw string content of the SVG to inject closely.
+    Returns (viewBox, inner_content)
+    Filters out Inkscape/Sodipodi metadata that browsers can't render.
+    """
+    path = "espada_limpia.svg"
+    if not os.path.exists(path):
+        return "0 0 100 100", ""
+        
+    with open(path, "r", encoding="utf-8") as f:
+        content = f.read()
+        
+    import re
+    
+    # Extract viewBox
+    vb_match = re.search(r'viewBox="([^"]+)"', content)
+    viewbox = vb_match.group(1) if vb_match else "0 0 1011.28 172.35"
+    
+    # Extract everything between <svg> tags
+    start = content.find("<svg")
+    if start != -1:
+        content_start = content.find(">", start) + 1
+        content_end = content.rfind("</svg>")
+        inner_content = content[content_start:content_end]
+    else:
+        inner_content = ""
+    
+    # --- FILTER OUT INKSCAPE/SODIPODI METADATA ---
+    # Remove <defs ...>...</defs> blocks (often contain only IDs, no visuals)
+    # inner_content = re.sub(r'<defs[^>]*>.*?</defs>', '', inner_content, flags=re.DOTALL)
+    
+    # Remove <sodipodi:...> elements
+    inner_content = re.sub(r'<sodipodi:[^>]*/?>', '', inner_content, flags=re.DOTALL)
+    inner_content = re.sub(r'<sodipodi:[^>]*>.*?</sodipodi:[^>]*>', '', inner_content, flags=re.DOTALL)
+    
+    # Remove <inkscape:...> elements  
+    inner_content = re.sub(r'<inkscape:[^>]*/?>', '', inner_content, flags=re.DOTALL)
+    inner_content = re.sub(r'<inkscape:[^>]*>.*?</inkscape:[^>]*>', '', inner_content, flags=re.DOTALL)
+    
+    # Remove inkscape: and sodipodi: attributes from remaining elements
+    inner_content = re.sub(r'\s+inkscape:[a-zA-Z\-]+="[^"]*"', '', inner_content)
+    inner_content = re.sub(r'\s+sodipodi:[a-zA-Z\-]+="[^"]*"', '', inner_content)
+    
+    # Remove id attributes (not needed, can cause conflicts)
+    # inner_content = re.sub(r'\s+id="[^"]*"', '', inner_content)
+    
+    return viewbox, inner_content
+
 def render_sword_progress(percent: float):
     """
-    Sword Progress Bar V8 - "Power of Grayskull" Edition.
-    Features massive exterior glow and fluid internal gradient.
+    Renders sword progress using img tag + CSS clip-path.
+    Shows a grey background sword with a colored clipped overlay.
     """
+    # Load SVG as base64
+    path = "espada_limpia.svg"
+    if not os.path.exists(path):
+        st.warning("Sword SVG file missing.")
+        return
+        
+    with open(path, "rb") as f:
+        sword_b64 = base64.b64encode(f.read()).decode()
+
     pct_int = int(percent * 100)
+    data_url = f"data:image/svg+xml;base64,{sword_b64}"
     
-    # IDs
-    mask_id = f"mask_{pct_int}"
-    grad_id = f"grad_{pct_int}"
-    blur_filter_id = f"blur_{pct_int}"
+    # Two img layers:
+    # 1. Background: Grey desaturated sword (always visible)
+    # 2. Foreground: Colored sword, clipped to show only pct_int% from left
     
-    # PATH DEFINITION
-    # Reusing the exact same path data for all layers to ensure alignment
-    sword_path = "M10,30 L40,18 L250,18 C260,18 260,8 280,8 L295,8 C305,8 305,24 315,24 L360,24 C370,24 370,36 360,36 L315,36 C305,36 305,52 295,52 L280,52 C260,52 260,42 250,42 L40,42 Z"
+    html_code = f"""
+<div style="position: relative; max-width: 600px; margin: 0 auto; height: 100px;">
+<img src="{data_url}" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: contain; filter: grayscale(100%) brightness(0.3);" />
+<img src="{data_url}" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: contain; clip-path: inset(0 {100 - pct_int}% 0 0); filter: drop-shadow(0 0 10px cyan) brightness(1.3) saturate(2) hue-rotate(-10deg);" />
+</div>
+<div style="text-align: center; color: #00FFFF; font-size: 14px; font-weight: bold; text-shadow: 0 0 5px #00FFFF; margin-top: 5px;">{pct_int}%</div>
+"""
     
-    svg_code = f"""
-    <svg width="100%" height="80" viewBox="0 -10 400 80" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">
-        <defs>
-            <!-- 1. FLUID ENERGY GRADIENT (Core) -->
-            <linearGradient id="{grad_id}" x1="0%" y1="0%" x2="100%" y2="0%">
-                <stop offset="0%" stop-color="#FFFFFF" />    <!-- White Source -->
-                <stop offset="30%" stop-color="#00FFFF" />   <!-- Cyan Plasma -->
-                <stop offset="100%" stop-color="#0088FF" />  <!-- Electric Blue -->
-            </linearGradient>
-            
-            <!-- 2. BLUR FILTER (For Exterior Glow) -->
-            <filter id="{blur_filter_id}" x="-50%" y="-50%" width="200%" height="200%">
-                <feGaussianBlur stdDeviation="4" result="coloredBlur"/>
-            </filter>
-            
-            <!-- 3. PROGRESS MASK -->
-            <mask id="{mask_id}">
-                <!-- White reveals. We use a rect that grows with % -->
-                <rect x="0" y="-10" width="{pct_int}%" height="100" fill="white" />
-            </mask>
-        </defs>
-        
-        <g stroke="none">
-             <!-- LAYER 1: BASE (The Empty Sword Container) -->
-             <path d="{sword_path}" fill="#222" stroke="#444" stroke-width="1" />
-             
-             <!-- LAYER 2: THE ENERGY (Masked by Progress) -->
-             <g mask="url(#{mask_id})">
-                 <!-- A. OUTSIDE GLOW (Behind) -->
-                 <!-- We draw the same sword, filled with bright CYAN, and heavily blurred -->
-                 <path d="{sword_path}" fill="#00FFFF" filter="url(#{blur_filter_id})" opacity="0.8" />
-                 
-                 <!-- B. FLUID CORE (Front) -->
-                 <!-- We draw the sword again, filled with the gradient -->
-                 <path d="{sword_path}" fill="url(#{grad_id})" />
-             </g>
-             
-             <!-- LAYER 3: HARDWARE DETAILS (Overlay) -->
-             <!-- Handle/Guard details that should sit ON TOP of the glow logic -->
-             <path d="M40,30 L250,30" stroke="#003366" stroke-width="1" stroke-opacity="0.3" />
-             <path d="M265,24 L300,24" stroke="#003366" stroke-width="1" stroke-opacity="0.5" />
-             <path d="M265,36 L300,36" stroke="#003366" stroke-width="1" stroke-opacity="0.5" />
-        </g>
-        
-        <text x="200" y="65" font-family="Arial, sans-serif" font-size="11" fill="#777" text-anchor="middle">
-             {pct_int}%
-        </text>
-    </svg>
-    """
-    
-    svg_code_oneline = " ".join(svg_code.split())
-    st.markdown(f'<div style="text-align: center; margin: 5px 0;">{svg_code_oneline}</div>', unsafe_allow_html=True)
+    st.markdown(html_code, unsafe_allow_html=True)
 
 async def execute_search(query):
     # Use a container for the progress to avoid overwriting or shifting issues
@@ -443,8 +526,8 @@ with st.sidebar:
 
 
 # --- MAIN CONTENT ---
-st.subheader("Elige Colección")
-selected_category = st.selectbox("Categoría", list(CATEGORIES.keys()), index=0)
+st.subheader("Filtrar Resultados")
+search_filter = st.text_input("Busca dentro de los resultados...", placeholder="Ej: Origins, Snake, Grayskull...")
 
 st.markdown("###") 
 b_col1, b_col2, b_col3 = st.columns([1, 2, 1])
@@ -491,10 +574,10 @@ if st.session_state.has_searched:
         df = pd.DataFrame(data)
         
         # --- FILTERING ---
-        keywords = CATEGORIES.get(selected_category, [])
-        if keywords:
-            pattern = '|'.join(keywords)
-            df = df[df['Nombre'].str.contains(pattern, case=False, na=False)]
+        # --- FILTERING ---
+        if search_filter:
+            # Filtrado dinámico por texto (case-insensitive)
+            df = df[df['Nombre'].str.contains(search_filter, case=False, na=False)]
             
         if selected_stores:
             df = df[df['Tienda'].isin(selected_stores)]
@@ -529,7 +612,7 @@ if st.session_state.has_searched:
         else:
              final_items.sort(key=lambda x: x['Nombre'])
 
-        st.success(f"Resultados para **{selected_category}**: {len(final_items)} figuras")
+        st.success(f"Resultados para **{search_filter if search_filter else 'Todos'}**: {len(final_items)} figuras")
         
         html_cards = ""
         for item in final_items:
