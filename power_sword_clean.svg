@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg viewBox="0 0 1000 200" xmlns="http://www.w3.org/2000/svg">
+  <!-- He-Man Power Sword - Clean Vector (No Background) -->
+  <!-- Designed to work with CSS/SVG Masking for progress animation -->
+  
+  <defs>
+    <!-- Gradient for shading effect -->
+    <linearGradient id="blade_shade" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#d0d0d0"/>
+      <stop offset="50%" stop-color="#c0c0c0"/>
+      <stop offset="100%" stop-color="#a0a0a0"/>
+    </linearGradient>
+  </defs>
+  
+  <g id="power_sword" fill="#c8c8c8" stroke="#333" stroke-width="2">
+    
+    <!-- ==================== BLADE ==================== -->
+    <!-- Main blade outline - tapered from guard to sharp tip -->
+    <path id="blade" d="
+      M 10,100
+      L 520,85
+      Q 540,85 560,88
+      L 560,88
+      L 520,115
+      L 10,100
+      Z
+    " fill="url(#blade_shade)"/>
+    
+    <!-- Blade center ridge (detail line) -->
+    <path id="blade_ridge" d="M 30,100 L 500,100" fill="none" stroke="#666" stroke-width="1.5"/>
+    
+    <!-- ==================== CROSSGUARD ==================== -->
+    <!-- The iconic curved crossguard with ornate design -->
+    <g id="crossguard">
+      <!-- Main guard body -->
+      <path d="
+        M 520,70
+        Q 550,65 580,70
+        Q 600,75 620,85
+        L 630,90
+        Q 640,95 640,100
+        Q 640,105 630,110
+        L 620,115
+        Q 600,125 580,130
+        Q 550,135 520,130
+        L 520,70
+        Z
+      "/>
+      
+      <!-- Upper decorative curve -->
+      <path d="
+        M 540,72
+        Q 560,50 590,55
+        Q 610,58 620,70
+        L 610,75
+        Q 600,68 585,65
+        Q 565,62 550,78
+        Z
+      " fill="#b8b8b8"/>
+      
+      <!-- Lower decorative curve (mirror) -->
+      <path d="
+        M 540,128
+        Q 560,150 590,145
+        Q 610,142 620,130
+        L 610,125
+        Q 600,132 585,135
+        Q 565,138 550,122
+        Z
+      " fill="#b8b8b8"/>
+      
+      <!-- Center gem/detail -->
+      <ellipse cx="570" cy="100" rx="15" ry="12" fill="#a0a0a0" stroke="#555" stroke-width="1.5"/>
+      <ellipse cx="570" cy="100" rx="8" ry="6" fill="#888"/>
+    </g>
+    
+    <!-- ==================== HANDLE/GRIP ==================== -->
+    <g id="handle">
+      <!-- Main grip cylinder -->
+      <rect x="630" y="90" width="80" height="20" rx="3" ry="3" fill="#b0b0b0"/>
+      
+      <!-- Grip texture lines -->
+      <line x1="645" y1="90" x2="645" y2="110" stroke="#888" stroke-width="1"/>
+      <line x1="660" y1="90" x2="660" y2="110" stroke="#888" stroke-width="1"/>
+      <line x1="675" y1="90" x2="675" y2="110" stroke="#888" stroke-width="1"/>
+      <line x1="690" y1="90" x2="690" y2="110" stroke="#888" stroke-width="1"/>
+      <line x1="705" y1="90" x2="705" y2="110" stroke="#888" stroke-width="1"/>
+      
+      <!-- Guard collar (where handle meets guard) -->
+      <ellipse cx="635" cy="100" rx="8" ry="12" fill="#a8a8a8" stroke="#555"/>
+    </g>
+    
+    <!-- ==================== POMMEL ==================== -->
+    <g id="pommel">
+      <!-- Pommel base -->
+      <ellipse cx="720" cy="100" rx="10" ry="14" fill="#b0b0b0" stroke="#444"/>
+      
+      <!-- Pommel end cap -->
+      <circle cx="735" cy="100" r="10" fill="#a0a0a0" stroke="#444"/>
+      
+      <!-- Pommel detail -->
+      <circle cx="735" cy="100" r="5" fill="#888"/>
+    </g>
+    
+  </g>
+</svg>
